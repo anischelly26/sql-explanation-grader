@@ -51,7 +51,7 @@ function render(){
   '<div class="card"><div class="label">B − A</div><div class="value">'+(n?((100*(b-a)/n>=0?'+':'')+(100*(b-a)/n).toFixed(1)+' pp'):'—')+'</div><div class="muted">paired pass difference</div></div>'+
   '<div class="card"><div class="label">Disagreements</div><div class="value warn">'+dis+'</div><div class="muted">'+pct(dis,n)+' of valid</div></div>'+
   '<div class="card"><div class="label">Latency avg</div><div class="value">'+avg(al)+' / '+avg(bl)+'s</div><div class="muted">A / B</div></div>'+
-  '<div class="card"><div class="label">Output tok/s</div><div class="value">'+avg(at)+' / '+avg(bt)+'</div><div class="muted">A / B</div></div>'+\
+  '<div class="card"><div class="label">Output tok/s</div><div class="value">'+avg(at)+' / '+avg(bt)+'</div><div class="muted">A / B</div></div>'+
   '<div class="card"><div class="label">RAG</div><div class="value">'+(rag&&rag.enabled?'ON':'OFF')+'</div><div class="muted">'+(rag&&rag.enabled?(rag.top_k+' chunks/query'):'No retrieval')+'</div></div>';
  renderDims(v,n,an,bn);renderPairs(v,n);renderCats(v,an,bn);renderCases();
  var hashes={};rows.forEach(function(r){if(r.benchmark_fairness_sha256)hashes[r.benchmark_fairness_sha256]=1});
