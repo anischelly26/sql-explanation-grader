@@ -81,6 +81,17 @@ def main():
     table(["Metric", summary["a_name"], summary["b_name"]], metric_rows)
     print("* Token counts are tokenizer/model-specific; compare them as observed resource metrics, not identical units across architectures.")
 
+    if summary.get("rag"):
+        rag_summary = summary["rag"]
+        if rag_summary["avg_retrieval_score"] is not None:
+            print(
+                f"RAG: enabled={rag_summary['enabled']} | "
+                f"avg chunks/query={rag_summary['avg_chunks_per_query']:.2f} | "
+                f"avg retrieval score={rag_summary['avg_retrieval_score']:.4f}"
+            )
+        else:
+            print(f"RAG: enabled={rag_summary['enabled']} | avg chunks/query={rag_summary['avg_chunks_per_query']:.2f}")
+
     boot = summary["bootstrap"]
     print(f"\nPaired difference (B − A): {boot['delta_pct']:+.1f} percentage points; 95% bootstrap CI [{boot['ci_low_pct']:+.1f}, {boot['ci_high_pct']:+.1f}]")
     print(f"Exact McNemar p-value on disagreements: {summary['mcnemar_exact_p'] if summary['mcnemar_exact_p'] is not None else '—'}")

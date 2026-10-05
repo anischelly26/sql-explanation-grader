@@ -14,6 +14,7 @@ from tqdm import tqdm
 
 from llm import call_json
 from metrics import valid_rows
+from rag import LocalRAG
 from schema import Explanation, Verdict
 from sql_features import detect_categories, operation_inventory
 
@@ -43,12 +44,21 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--keep-alive", default="10m")
     p.add_argument("--warmup", action=argparse.BooleanOptionalAction, default=True,
                    help="Warm both generators and the judge before measured calls (default: true).")
+    p.add_argument("--rag-file", type=pathlib.Path, default=pathlib.Path("knowledge/sql_rag.jsonl"),
+                   help="Local JSONL knowledge base used by the lightweight RAG retriever.")
+    p.add_argument("--rag-k", type=int, default=3, help="Number of local RAG chunks retrieved per query.")
+    p.add_argument("--no-rag", action="store_true", help="Disable local RAG for a clean baseline/ablation run.")
     args = p.parse_args()
+
     for path, label in ((args.prompt_file, "prompt file"), (args.judge_prompt, "judge prompt")):
         if not path.exists():
             p.error(f"{label} does not exist: {path}")
     if args.workers < 1:
         p.error("--workers must be >= 1")
+    if args.rag_k < 0:
+        p.error("--rag-k must be >= 0")
+    if not args.no_rag and not args.rag_file.exists():
+        p.error(f"RAG file does not exist: {args.rag_file}")
     if args.model_a == args.model_b:
         logger.warning("Model A and Model B are identical; this is a sanity check, not a model comparison.")
     return args
@@ -89,7 +99,7 @@ def sha256_text(*parts: str) -> str:
 
 def is_complete(row: dict[str, Any]) -> bool:
     return (
-        row.get("benchmark_version") == 3
+        row.get("benchmark_version") == 4
         and not row.get("error")
         and row.get("model_a", {}).get("score") is not None
         and row.get("model_b", {}).get("score") is not None
@@ -107,6 +117,16 @@ def main() -> int:
     if not items:
         raise SystemExit("dataset is empty")
 
+    rag = None if args.no_rag else LocalRAG(args.rag_file)
+    rag_file_sha = rag.file_sha256 if rag else None
+    rag_config = {
+        "enabled": rag is not None,
+        "file": str(args.rag_file) if rag else None,
+        "file_sha256": rag_file_sha,
+        "top_k": args.rag_k if rag else 0,
+        "retrieval": "tfidf_cosine" if rag else None,
+    }
+
     settings = {
         "temperature": args.temperature,
         "seed": args.seed,
@@ -119,8 +139,13 @@ def main() -> int:
     prompt_sha = hashlib.sha256(prompt.encode()).hexdigest()
     judge_prompt_sha = hashlib.sha256(judge_prompt.encode()).hexdigest()
     benchmark_fairness_sha = sha256_text(
-        prompt_sha, judge_prompt_sha, json.dumps(settings, sort_keys=True),
-        args.model_a, args.model_b, args.judge_model,
+        prompt_sha,
+        judge_prompt_sha,
+        json.dumps(settings, sort_keys=True),
+        json.dumps(rag_config, sort_keys=True),
+        args.model_a,
+        args.model_b,
+        args.judge_model,
     )
 
     out_path = pathlib.Path(f"results/{args.run_id}_{args.split}.jsonl")
@@ -130,11 +155,25 @@ def main() -> int:
         for row in load_jsonl(out_path):
             existing[row["id"]] = row
         existing = {k: v for k, v in existing.items() if is_complete(v)}
-        logger.info("Resume state: %d/%d complete v3 items", len(existing), len(items))
+        logger.info("Resume state: %d/%d complete v4 items", len(existing), len(items))
+
+    def retrieve(item: dict[str, Any]) -> tuple[list[Any], str]:
+        if not rag:
+            return [], "No local RAG context was used. Use the supplied SQL and schema only."
+        return rag.retrieve_for_case(
+            schema=item["schema"],
+            sql=item["sql"],
+            categories=detect_categories(item["sql"]),
+            top_k=args.rag_k,
+        )
 
     if args.warmup:
         warm_item = items[0]
-        warm_user = f"Schema:\n{warm_item['schema']}\n\nSQL:\n{warm_item['sql']}"
+        _, warm_rag_context = retrieve(warm_item)
+        warm_user = (
+            f"Schema:\n{warm_item['schema']}\n\nSQL:\n{warm_item['sql']}\n\n"
+            f"Retrieved local guidance:\n{warm_rag_context}"
+        )
         for model in (args.model_a, args.model_b):
             try:
                 call_json(model, prompt, warm_user, Explanation, temperature=args.temperature, seed=args.seed,
@@ -143,26 +182,54 @@ def main() -> int:
             except Exception as exc:
                 logger.warning("Warmup failed for %s: %s", model, exc)
         try:
-            call_json(args.judge_model, judge_prompt, warm_user + "\n\nExplanation to evaluate:\nWarmup only.", Verdict,
-                      temperature=0.0, seed=args.seed, num_predict=args.judge_num_predict, num_ctx=args.num_ctx,
-                      top_p=1.0, top_k=0, repeat_penalty=1.0, ollama_host=args.ollama_host, keep_alive=args.keep_alive)
+            call_json(
+                args.judge_model,
+                judge_prompt,
+                warm_user + "\n\nExplanation to evaluate:\nWarmup only.",
+                Verdict,
+                temperature=0.0,
+                seed=args.seed,
+                num_predict=args.judge_num_predict,
+                num_ctx=args.num_ctx,
+                top_p=1.0,
+                top_k=0,
+                repeat_penalty=1.0,
+                ollama_host=args.ollama_host,
+                keep_alive=args.keep_alive,
+            )
         except Exception as exc:
             logger.warning("Judge warmup failed: %s", exc)
 
     remaining = [(idx, item) for idx, item in enumerate(items) if item["id"] not in existing]
-    logger.info("A/B: %s vs %s | judge=%s | split=%s | workers=%d | warmup=%s",
-                args.model_a, args.model_b, args.judge_model, args.split, args.workers, args.warmup)
+    logger.info(
+        "A/B: %s vs %s | judge=%s | split=%s | workers=%d | warmup=%s | rag=%s(k=%d)",
+        args.model_a,
+        args.model_b,
+        args.judge_model,
+        args.split,
+        args.workers,
+        args.warmup,
+        rag is not None,
+        args.rag_k if rag else 0,
+    )
 
-    def generate(model: str, item: dict[str, Any]) -> tuple[Explanation, dict[str, Any]]:
-        user = f"Schema:\n{item['schema']}\n\nSQL:\n{item['sql']}"
+    def generate(model: str, item: dict[str, Any], rag_context: str) -> tuple[Explanation, dict[str, Any]]:
+        user = (
+            f"Schema:\n{item['schema']}\n\n"
+            f"SQL:\n{item['sql']}\n\n"
+            f"Retrieved local guidance:\n{rag_context}\n\n"
+            "Use the guidance only to clarify SQL semantics. The exact SQL and schema are authoritative."
+        )
         return call_json(model, prompt, user, Explanation, temperature=args.temperature, seed=args.seed,
                          num_predict=args.num_predict, num_ctx=args.num_ctx, top_p=args.top_p, top_k=args.top_k,
                          repeat_penalty=args.repeat_penalty, ollama_host=args.ollama_host, keep_alive=args.keep_alive)
 
-    def judge(item: dict[str, Any], explanation: str) -> tuple[Verdict, dict[str, Any]]:
+    def judge(item: dict[str, Any], explanation: str, rag_context: str) -> tuple[Verdict, dict[str, Any]]:
         user = (
-            f"Schema:\n{item['schema']}\n\nSQL:\n{item['sql']}\n\n"
+            f"Schema:\n{item['schema']}\n\n"
+            f"SQL:\n{item['sql']}\n\n"
             f"{operation_inventory(item['sql'])}\n\n"
+            f"Retrieved local guidance:\n{rag_context}\n\n"
             f"Candidate explanation:\n{explanation}"
         )
         return call_json(args.judge_model, judge_prompt, user, Verdict, temperature=0.0, seed=args.seed,
@@ -171,8 +238,18 @@ def main() -> int:
 
     def process(index: int, item: dict[str, Any]) -> dict[str, Any]:
         case_sha = sha256_text(item["schema"], item["sql"])
+        rag_results, rag_context = retrieve(item)
+        rag_rows = [
+            {
+                "id": result.chunk.id,
+                "title": result.chunk.title,
+                "score": result.score,
+                "source": result.chunk.source,
+            }
+            for result in rag_results
+        ]
         base: dict[str, Any] = {
-            "benchmark_version": 3,
+            "benchmark_version": 4,
             "id": item["id"],
             "domain": item.get("domain", "unknown"),
             "dataset_feature": item.get("feature", "unknown"),
@@ -190,6 +267,11 @@ def main() -> int:
             "model_b_name": args.model_b,
             "judge_model": args.judge_model,
             "generation_order": "A_FIRST" if index % 2 == 0 else "B_FIRST",
+            "rag": {
+                **rag_config,
+                "retrieved_chunks": rag_rows,
+                "context_sha256": hashlib.sha256(rag_context.encode()).hexdigest(),
+            },
             "model_a": {"score": None, "error": None},
             "model_b": {"score": None, "error": None},
             "error": None,
@@ -199,7 +281,7 @@ def main() -> int:
         order = (("a", args.model_a), ("b", args.model_b)) if base["generation_order"] == "A_FIRST" else (("b", args.model_b), ("a", args.model_a))
         for label, model in order:
             try:
-                generated[label] = generate(model, item)
+                generated[label] = generate(model, item, rag_context)
             except Exception as exc:
                 base[f"model_{label}"]["error"] = str(exc)
 
@@ -213,7 +295,7 @@ def main() -> int:
             record["output_chars"] = len(output.explanation)
             record["output_words"] = len(output.explanation.split())
             try:
-                verdict, judge_cost = judge(item, output.explanation)
+                verdict, judge_cost = judge(item, output.explanation, rag_context)
                 dims = dimensions(verdict)
                 score = int(all(dims.values()))
                 record.update({
@@ -252,7 +334,6 @@ def main() -> int:
                     bar.set_postfix(id=row["id"], outcome=row.get("outcome"))
                     bar.update(1)
 
-    # Canonicalize to dataset order and one row per query.
     with out_path.open("w", encoding="utf-8") as handle:
         for item in items:
             row = completed.get(item["id"])
@@ -261,12 +342,14 @@ def main() -> int:
 
     rows = [completed[item["id"]] for item in items if item["id"] in completed]
     valid = valid_rows(rows)
-    logger.info("Completed %d/%d | valid A/B comparisons: %d | evaluation errors: %d",
-                len(rows), len(items), len(valid), len(rows) - len(valid))
+    logger.info(
+        "Completed %d/%d | valid A/B comparisons: %d | evaluation errors: %d",
+        len(rows), len(items), len(valid), len(rows) - len(valid),
+    )
     if valid:
         a = sum(r["model_a"]["score"] for r in valid)
         b = sum(r["model_b"]["score"] for r in valid)
-        logger.info("Judge pass rate: A %.1f%% | B %.1f%%", 100*a/len(valid), 100*b/len(valid))
+        logger.info("Judge pass rate: A %.1f%% | B %.1f%%", 100 * a / len(valid), 100 * b / len(valid))
     return 0 if len(valid) == len(items) else 1
 
 

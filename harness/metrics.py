@@ -69,6 +69,7 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
     if not valid:
         return result
+
     for key, model_key in (("a", "model_a"), ("b", "model_b")):
         result[f"{key}_name"] = valid[0].get(f"model_{key}_name", f"Model {key.upper()}")
         result[f"{key}_pass_rate_pct"] = percent(sum(r[model_key]["score"] for r in valid), len(valid))
@@ -82,6 +83,21 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
         result[f"{key}_out_tok_avg"] = mean(c["out_tok"] for c in costs) if costs else None
         result[f"{key}_in_tok_avg"] = mean(c["in_tok"] for c in costs) if costs else None
         result[f"{key}_tok_per_s_avg"] = mean(c["tok_per_s"] for c in costs) if costs else None
+
+    rag_rows = [r.get("rag", {}) for r in valid if r.get("rag")]
+    if rag_rows:
+        scores = [
+            chunk["score"]
+            for row in rag_rows
+            for chunk in row.get("retrieved_chunks", [])
+            if chunk.get("score") is not None
+        ]
+        result["rag"] = {
+            "enabled": any(bool(r.get("enabled")) for r in rag_rows),
+            "avg_chunks_per_query": mean(len(r.get("retrieved_chunks", [])) for r in rag_rows),
+            "avg_retrieval_score": mean(scores) if scores else None,
+        }
+
     result["bootstrap"] = paired_bootstrap_delta(valid)
     result["mcnemar_exact_p"] = mcnemar_exact_p(valid)
     result["category"] = category_summary(valid)

@@ -225,3 +225,71 @@ python -m py_compile harness/*.py dashboard/server.py
 ## Legacy workflow
 
 harness/run.py remains available for the original single-generator workflow. New A/B comparisons should use harness/compare.py.
+
+## Lightweight local RAG
+
+Benchmark v4 adds a small **local RAG layer**. It is intentionally simple so it does not create a new API or cloud dependency.
+
+The knowledge base is:
+
+~~~text
+knowledge/sql_rag.jsonl
+~~~
+
+It contains short, checked-in SQL guidance covering SELECT, WHERE, JOIN, GROUP BY, HAVING, ORDER BY/LIMIT, subqueries/CTEs, set operations, window functions, NULL semantics, grounding and explanation style.
+
+At runtime:
+
+~~~text
+SQL + schema + detected categories
+            ↓
+      local TF-IDF search
+            ↓
+       top 3 chunks
+            ↓
+   Model A + Model B + judge
+~~~
+
+The retrieval is deterministic and independent of either model's answer, so **both models receive the same retrieved context**.
+
+The project already includes scikit-learn, so this uses local TF-IDF + cosine similarity rather than an external embedding API. This keeps the RAG addition small and cheap.
+
+### Run with RAG
+
+RAG is enabled by default:
+
+~~~bash
+python harness/compare.py dev prompts/v2.md qwen_vs_llama_rag \
+  --model-a qwen2.5:7b \
+  --model-b llama3.1:8b \
+  --judge-model qwen2.5:7b \
+  --rag-k 3
+~~~
+
+Change the number of retrieved chunks:
+
+~~~bash
+--rag-k 5
+~~~
+
+Run a clean non-RAG baseline:
+
+~~~bash
+--no-rag
+~~~
+
+This is useful for an **RAG ON vs RAG OFF ablation**. Do not mix the two result files as one benchmark because the fairness hash records the RAG configuration.
+
+Each result row records:
+
+- RAG enabled/disabled
+- knowledge-base file hash
+- retrieval method
+- retrieved chunk IDs
+- retrieval scores
+- context hash
+
+The dashboard also shows whether RAG was used.
+
+RAG is supporting knowledge only. The exact SQL and schema remain authoritative, so retrieval cannot justify invented tables, columns, filters or business meaning.
+

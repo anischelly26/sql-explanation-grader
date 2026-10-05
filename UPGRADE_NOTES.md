@@ -35,3 +35,13 @@
 - Search/filter per-query cases.
 - Side-by-side explanations and judge reasons.
 - PDF export endpoint and standalone PDF report.
+
+
+## Lightweight RAG (v4)
+
+- Added a checked-in SQL knowledge base at knowledge/sql_rag.jsonl.
+- Added deterministic local TF-IDF + cosine retrieval in harness/rag.py.
+- Both generators and the shared judge receive the same retrieved chunks.
+- RAG retrieval is independent of model output and therefore does not create an A/B fairness difference.
+- Result rows store the knowledge-base hash, retrieved chunk IDs/scores, and context hash.
+- Added --rag-k and --no-rag for simple RAG ablation testing.

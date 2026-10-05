@@ -43,7 +43,7 @@ function render(){
  var bl=v.map(function(r){return r.model_b.generation_cost&&r.model_b.generation_cost.latency_s}).filter(function(x){return x!=null});
  var at=v.map(function(r){return r.model_a.generation_cost&&r.model_a.generation_cost.tok_per_s}).filter(function(x){return x!=null});
  var bt=v.map(function(r){return r.model_b.generation_cost&&r.model_b.generation_cost.tok_per_s}).filter(function(x){return x!=null});
- var an=rows[0]&&rows[0].model_a_name||'Model A',bn=rows[0]&&rows[0].model_b_name||'Model B';
+ var an=rows[0]&&rows[0].model_a_name||'Model A',bn=rows[0]&&rows[0].model_b_name||'Model B',rag=rows[0]&&rows[0].rag;
  $('notice').innerHTML='<div class="notice">Pass percentages are judge pass rates. Raw token counts use each model tokenizer and are not perfectly equivalent across architectures.'+(err?' <b>'+err+'</b> evaluation-error row(s) are excluded from pass-rate statistics.':'')+'</div>';
  $('cards').innerHTML=
   '<div class="card"><div class="label">'+esc(an)+' pass</div><div class="value a">'+pct(a,n)+'</div><div class="muted">'+a+'/'+n+'</div></div>'+
@@ -51,7 +51,8 @@ function render(){
   '<div class="card"><div class="label">B − A</div><div class="value">'+(n?((100*(b-a)/n>=0?'+':'')+(100*(b-a)/n).toFixed(1)+' pp'):'—')+'</div><div class="muted">paired pass difference</div></div>'+
   '<div class="card"><div class="label">Disagreements</div><div class="value warn">'+dis+'</div><div class="muted">'+pct(dis,n)+' of valid</div></div>'+
   '<div class="card"><div class="label">Latency avg</div><div class="value">'+avg(al)+' / '+avg(bl)+'s</div><div class="muted">A / B</div></div>'+
-  '<div class="card"><div class="label">Output tok/s</div><div class="value">'+avg(at)+' / '+avg(bt)+'</div><div class="muted">A / B</div></div>';
+  '<div class="card"><div class="label">Output tok/s</div><div class="value">'+avg(at)+' / '+avg(bt)+'</div><div class="muted">A / B</div></div>'+\
+  '<div class="card"><div class="label">RAG</div><div class="value">'+(rag&&rag.enabled?'ON':'OFF')+'</div><div class="muted">'+(rag&&rag.enabled?(rag.top_k+' chunks/query'):'No retrieval')+'</div></div>';
  renderDims(v,n,an,bn);renderPairs(v,n);renderCats(v,an,bn);renderCases();
  var hashes={};rows.forEach(function(r){if(r.benchmark_fairness_sha256)hashes[r.benchmark_fairness_sha256]=1});
  if(Object.keys(hashes).length>1)$('notice').innerHTML+='<div class="notice">WARNING: multiple benchmark fairness hashes are present. Do not pool these rows as one fair comparison.</div>';
@@ -83,13 +84,13 @@ function panel(label,m,name,cls){
  '<div class="chips">'+dims(m)+'</div><div class="metric-grid"><div class="metric">Latency<br><b>'+(gc.latency_s==null?'—':gc.latency_s+'s')+'</b></div><div class="metric">Input tokens<br><b>'+(gc.in_tok==null?'—':gc.in_tok)+'</b></div><div class="metric">Output tokens<br><b>'+(gc.out_tok==null?'—':gc.out_tok)+'</b></div></div>'+
  '<div class="explain">'+esc(m.explanation||'')+'</div><div class="muted mini">'+esc(m.judge_reason||m.error||'')+'</div></div>'
 }
-function renderCases(){
+function ragInfo(r){if(!r||!r.enabled)return '<div class="chips"><span class="chip muted">RAG off</span></div>';var chunks=r.retrieved_chunks||[];return '<div class="chips"><span class="chip">RAG: '+chunks.length+' chunks</span>'+chunks.map(function(c){return '<span class="chip">'+esc(c.id)+' · '+c.score+'</span>'}).join('')+'</div>'}\nfunction renderCases(){
  var q=($('search').value||'').toLowerCase(),f=$('filter').value;
  var list=rows.filter(function(r){return (f==='all'||r.outcome===f)&&((r.id||'').toLowerCase().indexOf(q)>=0||(r.sql||'').toLowerCase().indexOf(q)>=0)}).slice(0,200);
  if(!list.length){$('cases').innerHTML='<div class="empty">No matching cases.</div>';return}
  $('cases').innerHTML=list.map(function(r){
   return '<details class="case"><summary><b>'+esc(r.id)+'</b> · <span class="'+(r.outcome==='both_correct'?'good':r.outcome==='both_wrong'?'bad':'warn')+'">'+esc(r.outcome||'—')+'</span> · <span class="muted">'+esc((r.categories||[]).join(', ')||'basic SELECT')+'</span></summary>'+
-  '<div class="case-body"><div class="sql">'+esc(r.sql||'')+'</div><div class="two" style="margin-top:10px">'+panel('A',r.model_a,r.model_a_name||'A','a')+panel('B',r.model_b,r.model_b_name||'B','b')+'</div></div></details>'
+  '<div class="case-body"><div class="sql">'+esc(r.sql||'')+'</div>'+ragInfo(r.rag)+'<div class="two" style="margin-top:10px">'+panel('A',r.model_a,r.model_a_name||'A','a')+panel('B',r.model_b,r.model_b_name||'B','b')+'</div></div></details>'
  }).join('')
 }
 loadRuns();
