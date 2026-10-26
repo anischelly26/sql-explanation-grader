@@ -189,7 +189,7 @@
       "categories": ["json_function"],
       "path": "corpus/extra/sqlite-json.html",
       "ingest_by_default": false,
-      "note": "Deliberately left out of the default index so the abstention demo has an uncovered feature. Ingest it from the Knowledge Base page (or `python -m sqlrag.ingest --doc sqlite-json`) to see JSON queries become answerable."
+      "note": "Deliberately left out of the default index so the abstention demo has an uncovered feature. Ingest it from the Knowledge Base page (or `python -m sqlrag ingest --doc sqlite-json`) to see JSON queries become answerable."
     }
   ]
 }
