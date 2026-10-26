@@ -63,6 +63,9 @@ class Settings:
     rrf_k: int = field(default_factory=lambda: _env_int("SQLRAG_RRF_K", 60))
     min_similarity: float = field(default_factory=lambda: _env_float("SQLRAG_MIN_SIMILARITY", 0.45))
     max_context_tokens: int = field(default_factory=lambda: _env_int("SQLRAG_MAX_CONTEXT_TOKENS", 1800))
+    # After one covering passage per feature, fill the remaining top_k slots with the
+    # best other candidates (True) or stop (False: "focused" context).
+    fill_context: bool = field(default_factory=lambda: _env_bool("SQLRAG_FILL_CONTEXT", True))
 
     # Grounding policy --------------------------------------------------
     # abstain : refuse to explain when evidence does not cover the query
@@ -119,6 +122,7 @@ class Settings:
             "rrf_k": self.rrf_k,
             "min_similarity": self.min_similarity,
             "max_context_tokens": self.max_context_tokens,
+            "fill_context": self.fill_context,
             "embedding_backend": self.embedding_backend,
             "embedding_model": self.embedding_model,
             "chunk_size": self.chunk_size,

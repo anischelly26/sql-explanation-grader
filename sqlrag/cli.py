@@ -206,8 +206,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--limit", type=int, help="only the first N items (smoke runs)")
     p.add_argument("--conditions", default="baseline,rag")
     p.add_argument("--judge-evidence", choices=["none", "retrieved"], default="none")
-    p.add_argument("--judge-mode", choices=["rubric", "legacy"], default="rubric",
-                   help="rubric = schema-aware rubric judge (new); legacy = original judge.md without schema")
+    p.add_argument("--judge-mode", choices=["rubric", "legacy", "legacy_schema"], default="rubric",
+                   help="rubric = schema-aware rubric judge (new); legacy = original judge.md without schema; legacy_schema = original judge.md + schema")
     p.add_argument("--phase", choices=["all", "generate", "judge", "summarize"], default="all")
     p.add_argument("--no-pdf", action="store_true")
     p.set_defaults(func=cmd_experiment)

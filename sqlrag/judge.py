@@ -37,27 +37,31 @@ class LegacyJudge:
     fix changes. New experiments use `Judge` (mode "rubric").
     """
 
-    mode = "legacy"
-
     def __init__(self, settings: Settings, client: LLMClient, model: str | None = None,
-                 prompt_path: pathlib.Path | None = None) -> None:
+                 prompt_path: pathlib.Path | None = None, include_schema: bool = False) -> None:
         self.settings = settings
         self.client = client
         self.model = model or settings.judge_model
+        self.include_schema = include_schema
+        # "legacy" = original input; "legacy_schema" = original prompt + schema (harness/run.py default now)
+        self.mode = "legacy_schema" if include_schema else "legacy"
         guide, self.prompt_hash = load_prompt(prompt_path or ROOT / "prompts" / "judge.md")
         self.system = f"{guide}\n\nGive a grade (good or bad) and a short reason."
         self.prompt_file = "judge.md"
 
     def grade(self, sql: str, schema: str, explanation: str, *, analysis: SQLAnalysis | None = None,
               evidence: list[RetrievedChunk] | None = None) -> dict:
-        v, m = self.client.generate_json(self.model, self.system, legacy_judge_user_message(sql, explanation), Verdict,
-                                         {"temperature": 0, "seed": self.settings.seed, "num_ctx": self.settings.num_ctx})
+        user = legacy_judge_user_message(sql, explanation)
+        if self.include_schema:
+            user = f"Schema:\n{schema}\n{user}"  # identical to harness/run.py judge_input()
+        v, m = self.client.generate_json(self.model, self.system, user, Verdict, self.settings.generation_options())
         return {
             "score": int(v.grade == "good"), "grade": v.grade, "reason": v.reason,
             "dimensions": None, "unsupported_claims": None, "n_unsupported_claims": None,
             "rubric_pass": None, "grade_consistent": None,
             "judge_model": self.model, "judge_mode": self.mode, "judge_prompt": self.prompt_file,
-            "judge_prompt_hash": self.prompt_hash, "judge_saw_schema": False, "judge_saw_evidence": False, "cost": m,
+            "judge_prompt_hash": self.prompt_hash, "judge_saw_schema": self.include_schema, "judge_saw_evidence": False,
+            "cost": m,
         }
 
 
@@ -101,4 +105,6 @@ def make_judge(settings: Settings, client: LLMClient, model: str | None = None, 
         return Judge(settings, client, model)
     if mode == "legacy":
         return LegacyJudge(settings, client, model)
+    if mode == "legacy_schema":
+        return LegacyJudge(settings, client, model, include_schema=True)
     raise ValueError(f"unknown judge mode {mode!r}")

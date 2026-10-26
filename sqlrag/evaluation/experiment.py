@@ -250,9 +250,11 @@ def export_legacy(exp_dir: pathlib.Path, judgments_path: pathlib.Path, split: st
     dashboard, harness/analyze.py and harness/export_pdf.py can read them."""
     gens = {(g["id"], g["condition"]): g for g in read_jsonl(exp_dir / "generations.jsonl") if not g.get("error")}
     judg = {(j["id"], j["condition"]): j for j in read_jsonl(judgments_path) if j.get("score") is not None}
+    tag = judgments_path.stem.split("__", 1)[1].replace("__", "-")
     paths = []
     for cond in CONDITIONS:
-        out = results_dir / f"{exp_dir.name}-{cond}_{split}.jsonl"
+        # <exp>-<condition>-<judge>_<split>.jsonl: one file per judge, readable by the legacy dashboard.
+        out = results_dir / f"{exp_dir.name}-{cond}-{tag}_{split}.jsonl"
         rows = []
         for (iid, c), g in gens.items():
             if c != cond or (iid, c) not in judg:
@@ -309,8 +311,9 @@ def main(args) -> int:
         judges = meta.setdefault("judges", {})
         tag = judgments_path.stem.split("__", 1)[1]
         _, jhash = load_prompt(settings.judge_prompt if args.judge_mode == "rubric" else ROOT / "prompts" / "judge.md")
+        # num_gpu only changes speed (layer placement), not sampling.
         judges[tag] = {"model": settings.judge_model, "mode": args.judge_mode, "evidence": args.judge_evidence,
-                       "prompt_sha256_12": jhash,
+                       "prompt_sha256_12": jhash, "options": settings.generation_options(),
                        "identity": client.model_identity(settings.judge_model) if hasattr(client, "model_identity") else None}
         exp.meta_path.write_text(json.dumps(meta, indent=2, default=str), encoding="utf-8")
         export_legacy(exp.dir, judgments_path, args.split, settings.results_dir)

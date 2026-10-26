@@ -40,6 +40,49 @@ def load_labels(labels_dir: pathlib.Path) -> list[dict]:
     return rows
 
 
+def reference_comparison(labels: list[dict], results_root: pathlib.Path) -> dict:
+    """Baseline vs RAG measured with reference labels instead of the LLM judge.
+
+    Only labels whose text hash matches the stored explanation are used. Results
+    are kept separate per label source and per experiment.
+    """
+    from .stats import mcnemar_exact, paired_bootstrap, wilson_interval
+
+    out: dict = {}
+    for src in LABEL_SOURCES:
+        by_exp: dict[str, dict] = {}
+        for exp_id in sorted({lab["exp_id"] for lab in labels if lab.get("label_source") == src}):
+            gens = {(g["id"], g["condition"]): g for g in read_jsonl(results_root / "rag" / exp_id / "generations.jsonl") if not g.get("error")}
+            valid: dict[tuple[str, str], int] = {}
+            for lab in labels:
+                if lab.get("label_source") != src or lab["exp_id"] != exp_id:
+                    continue
+                key = (lab["item_id"], lab["condition"])
+                g = gens.get(key)
+                if g and text_hash(g.get("explanation_clean") or "") == lab.get("explanation_sha256_12"):
+                    valid[key] = int(lab["label"] == "good")
+            conds = {}
+            for cond in ("baseline", "rag"):
+                vals = [v for (i, c), v in valid.items() if c == cond]
+                lo, hi = wilson_interval(sum(vals), len(vals))
+                conds[cond] = {"good": sum(vals), "n": len(vals), "rate": (sum(vals) / len(vals)) if vals else None, "ci95": [lo, hi]}
+            items = sorted({i for (i, c) in valid if (i, "baseline") in valid and (i, "rag") in valid})
+            b = sum(1 for i in items if valid[(i, "baseline")] == 1 and valid[(i, "rag")] == 0)
+            c = sum(1 for i in items if valid[(i, "baseline")] == 0 and valid[(i, "rag")] == 1)
+            by_exp[exp_id] = {
+                "conditions": conds,
+                "n_pairs": len(items),
+                "only_baseline_good": b,
+                "only_rag_good": c,
+                "both_good": sum(1 for i in items if valid[(i, "baseline")] == 1 and valid[(i, "rag")] == 1),
+                "both_bad": sum(1 for i in items if valid[(i, "baseline")] == 0 and valid[(i, "rag")] == 0),
+                "delta_rag_minus_baseline": paired_bootstrap([float(valid[(i, "rag")] - valid[(i, "baseline")]) for i in items]) if items else None,
+                "mcnemar_exact_p": mcnemar_exact(b, c),
+            }
+        out[src] = by_exp
+    return out
+
+
 def compute_agreement(labels_dir: pathlib.Path, results_root: pathlib.Path) -> dict:
     labels = load_labels(labels_dir)
     by_source: dict[str, list[dict]] = defaultdict(list)
@@ -97,6 +140,7 @@ def compute_agreement(labels_dir: pathlib.Path, results_root: pathlib.Path) -> d
             entry["judge_good_rate"] = sum(d["pred"]) / len(d["pred"]) if d["pred"] else None
             src_report["judges"][tag] = entry
         report["sources"][src] = src_report
+    report["reference_comparison"] = reference_comparison(labels, results_root)
     return report
 
 

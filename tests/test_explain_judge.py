@@ -85,6 +85,13 @@ def test_legacy_judge_reproduces_old_input(settings, fake_llm):
     assert out["judge_saw_schema"] is False and out["dimensions"] is None
 
 
+def test_legacy_schema_judge_matches_run_py_input(settings, fake_llm):
+    out = make_judge(settings, fake_llm, mode="legacy_schema").grade(COVERED, SCHEMA, "Lists customers.")
+    user = fake_llm.calls[-1]["user"]
+    assert user == f"Schema:\n{SCHEMA}\nSQL:\n{COVERED}\nExplanation:\nLists customers."
+    assert out["judge_saw_schema"] is True and out["judge_mode"] == "legacy_schema"
+
+
 def test_bad_grade_and_consistency(settings):
     out = Judge(settings, scripted_llm(grade="bad")).grade(COVERED, SCHEMA, "Wrong.")
     assert out["score"] == 0 and out["n_unsupported_claims"] == 1 and out["grade_consistent"]

@@ -267,10 +267,11 @@ class Retriever:
             for c in own + other:
                 if try_add(c):
                     break
-        for c in candidates:
-            if len(selected) >= top_k:
-                break
-            try_add(c)
+        if self.settings.fill_context or not selected:
+            for c in candidates:
+                if len(selected) >= top_k:
+                    break
+                try_add(c)
         selected.sort(key=lambda c: c.rank)
         for i, c in enumerate(selected, start=1):
             c.source_label = f"S{i}"
@@ -299,7 +300,7 @@ class Retriever:
             config={
                 "mode": mode, "top_k": top_k, "min_similarity": min_sim, "max_context_tokens": budget,
                 "rrf_k": rrf_k, "per_query_k": per_query_k, "min_feature_coverage": self.settings.min_feature_coverage,
-                "strategy": strategy,
+                "strategy": strategy, "fill_context": self.settings.fill_context,
                 "embedding_model": self.kb.embedder.name, "collection": self.kb.collection_name,
             },
             timings={
