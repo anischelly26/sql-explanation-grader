@@ -106,6 +106,32 @@ def write_experiment_pdf(exp_dir: pathlib.Path, summary: dict, reports_dir: path
     ]
     story.append(_table(rows, [6.4 * cm, 5.3 * cm, 5.3 * cm]))
 
+    try:
+        from .agreement import load_labels, reference_comparison
+
+        refs = reference_comparison(load_labels(ROOT / "data" / "labels"), ROOT / "results")
+    except Exception:  # labels are optional
+        refs = {}
+    names = {"human": "Human labels", "ai_reference": "AI-assisted reference labels (not human)"}
+    for src, by_exp in refs.items():
+        rc = by_exp.get(summary["exp_id"])
+        if not rc or not rc.get("n_pairs"):
+            continue
+        d = rc.get("delta_rag_minus_baseline") or {}
+        cb, cr = rc["conditions"]["baseline"], rc["conditions"]["rag"]
+        story += [
+            Paragraph(f"{names.get(src, src)}: share labelled good", h2),
+            _table([
+                ["", "Baseline", "RAG"],
+                ["Labelled good", f"{cb['good']}/{cb['n']}", f"{cr['good']}/{cr['n']}"],
+                ["Paired: only baseline good / only RAG good", str(rc["only_baseline_good"]), str(rc["only_rag_good"])],
+                ["RAG minus baseline (95% bootstrap CI)",
+                 f"{(d.get('mean') or 0) * 100:+.1f} pts ({(d.get('ci_low') or 0) * 100:+.1f} to {(d.get('ci_high') or 0) * 100:+.1f})",
+                 f"McNemar p = {rc['mcnemar_exact_p']:.3f}" if rc.get("mcnemar_exact_p") is not None else ""],
+            ], [7 * cm, 5 * cm, 5 * cm]),
+            Paragraph("Labels and their decision rules: data/labels/. They are not produced by the judge in this report.", small),
+        ]
+
     p = summary.get("paired") or {}
     if p:
         d = p.get("approval_delta_rag_minus_baseline") or {}
