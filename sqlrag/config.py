@@ -12,6 +12,33 @@ from dataclasses import dataclass, field, fields
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 
+def load_dotenv(path: pathlib.Path = ROOT / ".env") -> list[str]:
+    """Load KEY=VALUE lines from .env into os.environ without overriding real
+    environment variables. Inline comments (" # ...") and quotes are stripped.
+    Set SQLRAG_NO_DOTENV=1 to skip. Returns the keys that were set."""
+    if os.environ.get("SQLRAG_NO_DOTENV") == "1" or not path.is_file():
+        return []
+    loaded = []
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip().removeprefix("export ").strip()
+        value = value.strip()
+        if value[:1] in {'"', "'"} and value.count(value[0]) >= 2:
+            value = value[1:value.index(value[0], 1)]
+        elif " #" in value:
+            value = value.split(" #", 1)[0].rstrip()
+        if key and key not in os.environ:
+            os.environ[key] = value
+            loaded.append(key)
+    return loaded
+
+
+load_dotenv()
+
+
 def _env(name: str, default: str) -> str:
     value = os.environ.get(name)
     return default if value is None or value == "" else value
@@ -56,16 +83,16 @@ class Settings:
 
     # Retrieval ---------------------------------------------------------
     retrieval_mode: str = field(default_factory=lambda: _env("SQLRAG_RETRIEVAL_MODE", "hybrid"))  # hybrid | dense | bm25
-    top_k: int = field(default_factory=lambda: _env_int("SQLRAG_TOP_K", 6))
+    top_k: int = field(default_factory=lambda: _env_int("SQLRAG_TOP_K", 4))
     candidates: int = field(default_factory=lambda: _env_int("SQLRAG_CANDIDATES", 20))
     # Hits kept from each feature query before fusing across queries (0 = max(4, top_k)).
     per_query_k: int = field(default_factory=lambda: _env_int("SQLRAG_PER_QUERY_K", 0))
     rrf_k: int = field(default_factory=lambda: _env_int("SQLRAG_RRF_K", 60))
     min_similarity: float = field(default_factory=lambda: _env_float("SQLRAG_MIN_SIMILARITY", 0.45))
-    max_context_tokens: int = field(default_factory=lambda: _env_int("SQLRAG_MAX_CONTEXT_TOKENS", 1800))
+    max_context_tokens: int = field(default_factory=lambda: _env_int("SQLRAG_MAX_CONTEXT_TOKENS", 1200))
     # After one covering passage per feature, fill the remaining top_k slots with the
     # best other candidates (True) or stop (False: "focused" context).
-    fill_context: bool = field(default_factory=lambda: _env_bool("SQLRAG_FILL_CONTEXT", True))
+    fill_context: bool = field(default_factory=lambda: _env_bool("SQLRAG_FILL_CONTEXT", False))
 
     # Grounding policy --------------------------------------------------
     # abstain : refuse to explain when evidence does not cover the query
@@ -92,7 +119,7 @@ class Settings:
 
     # Prompts -----------------------------------------------------------
     baseline_prompt: pathlib.Path = field(default_factory=lambda: _path("SQLRAG_BASELINE_PROMPT", ROOT / "prompts" / "v2.md"))
-    rag_prompt: pathlib.Path = field(default_factory=lambda: _path("SQLRAG_RAG_PROMPT", ROOT / "prompts" / "v3_rag.md"))
+    rag_prompt: pathlib.Path = field(default_factory=lambda: _path("SQLRAG_RAG_PROMPT", ROOT / "prompts" / "v4_rag.md"))
     judge_prompt: pathlib.Path = field(default_factory=lambda: _path("SQLRAG_JUDGE_PROMPT", ROOT / "prompts" / "judge_v2_rubric.md"))
 
     # API ---------------------------------------------------------------

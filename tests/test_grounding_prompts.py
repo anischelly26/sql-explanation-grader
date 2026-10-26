@@ -92,3 +92,32 @@ def test_prompt_hash_is_stable():
     a = load_prompt(ROOT / "prompts" / "v3_rag.md")[1]
     b = load_prompt(ROOT / "prompts" / "v3_rag.md")[1]
     assert a == b and len(a) == 12
+
+
+def test_v4_rag_prompt_extends_v2_and_adds_no_sql_facts():
+    v2 = (ROOT / "prompts" / "v2.md").read_text(encoding="utf-8").strip()
+    v4 = (ROOT / "prompts" / "v4_rag.md").read_text(encoding="utf-8")
+    assert v4.startswith(v2)
+    extra = v4[len(v2):]
+    # The added section is about using sources, not about how SQL features behave.
+    for fact in ("ROW_NUMBER", "RANK", "BETWEEN", "LEFT JOIN", "cartesian"):
+        assert fact not in extra
+
+
+def test_dotenv_loader(tmp_path, monkeypatch):
+    from sqlrag.config import load_dotenv
+
+    env = tmp_path / ".env"
+    env.write_text("# comment\nSQLRAG_X1=abc   # trailing comment\nexport SQLRAG_X2=\"quoted # value\"\nSQLRAG_X3=keep\n", encoding="utf-8")
+    monkeypatch.delenv("SQLRAG_X1", raising=False)
+    monkeypatch.delenv("SQLRAG_X2", raising=False)
+    monkeypatch.setenv("SQLRAG_X3", "already-set")
+    monkeypatch.delenv("SQLRAG_NO_DOTENV", raising=False)
+    loaded = load_dotenv(env)
+    import os
+
+    assert sorted(loaded) == ["SQLRAG_X1", "SQLRAG_X2"]
+    assert os.environ["SQLRAG_X1"] == "abc" and os.environ["SQLRAG_X2"] == "quoted # value"
+    assert os.environ["SQLRAG_X3"] == "already-set"
+    monkeypatch.delenv("SQLRAG_X1")
+    monkeypatch.delenv("SQLRAG_X2")
