@@ -209,7 +209,7 @@ async def health():
     try:
         def _models():
             return [m["name"] for m in services.client.list_models()] if hasattr(services.client, "list_models") else []
-        names = await run_blocking(_models, timeout=5)
+        names = await run_blocking(_models, timeout=10)
         out["llm"] = {"provider": settings.llm_provider, "reachable": True, "models": names,
                       "generator_model": settings.generator_model, "generator_available": settings.generator_model in names,
                       "judge_model": settings.judge_model, "judge_available": settings.judge_model in names}
@@ -446,7 +446,7 @@ async def historical():
         scored = [r for r in rows if r.get("error") is None and r.get("score") is not None]
         if not scored:
             continue
-        kind = "derived from RAG experiment" if "-baseline_" in p.name or "-rag_" in p.name else "historical (pre-RAG)"
+        kind = "derived from RAG experiment" if ("-baseline-" in p.name or "-rag-" in p.name) else "historical (pre-RAG)"
         runs.append({"file": p.name, "kind": kind, "n": len(scored), "good": sum(r["score"] for r in scored),
                      "judge_saw_schema": any(r.get("judge_saw_schema") for r in scored)})
     return {"note": "Historical runs used the original judge, which did not see the database schema. "

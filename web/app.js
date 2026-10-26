@@ -44,7 +44,7 @@ function showTab(name) {
   try { localStorage.setItem("tab", name); } catch { /* ignore */ }
   if (name === "knowledge") loadKnowledge();
   if (name === "reports") loadReports();
-  if (name === "evaluation" && !state.experiments.length) loadExperiments();
+  if (name === "evaluation") { if (!state.experiments.length) loadExperiments(); else requestAnimationFrame(rerenderCharts); }
 }
 $$("nav.tabs button").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
 
@@ -57,7 +57,7 @@ async function loadHealth() {
     const idx = h.index || {};
     const ok = h.status === "ok" && llm.generator_available;
     el.className = `badge ${ok ? "good" : "warn"}`;
-    el.innerHTML = `<span class="dot"></span>${ok ? "Ready" : "Degraded"}: ${esc(idx.chunks ?? "?")} chunks indexed, LLM ${llm.reachable ? "reachable" : "unreachable"}`;
+    el.innerHTML = `<span class="dot"></span>${ok ? "Ready" : "Degraded"}: ${esc(idx.chunks ?? "?")} chunks indexed, LLM ${llm.reachable ? "reachable" : "busy or unreachable"}`;
     el.title = llm.reachable
       ? `Generator ${llm.generator_model} ${llm.generator_available ? "available" : "NOT pulled"}; judge ${llm.judge_model} ${llm.judge_available ? "available" : "NOT pulled"}`
       : `Ollama not reachable: ${llm.error || ""}`;
@@ -266,10 +266,25 @@ function hideTip() { tip.classList.add("hidden"); }
  * Horizontal grouped bars: two series (baseline, RAG) per category.
  * rows: [{label, a, b, aText, bText, tip}] ; max: domain maximum.
  */
-function groupedBars(el, rows, { max = 1, format = (v) => v, ticks = [0, 0.25, 0.5, 0.75, 1], labelWidth = 190 } = {}) {
+const charts = new Map();  // element id -> [rows, options]; re-rendered when visible or resized
+function rerenderCharts() {
+  for (const [id, [rows, opts]] of charts) {
+    const el = document.getElementById(id);
+    if (el && el.clientWidth) groupedBars(el, rows, opts);
+  }
+}
+let resizeTimer;
+window.addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(rerenderCharts, 150); });
+
+function groupedBars(el, rows, opts = {}) {
+  charts.set(el.id, [rows, opts]);
+  if (!el.clientWidth) return;  // hidden tab: drawn by rerenderCharts() when it is shown
+  const { max = 1, format = (v) => v, ticks = [0, 0.25, 0.5, 0.75, 1] } = opts;
+  const narrow = el.clientWidth < 520;
+  const labelWidth = narrow ? Math.min(opts.labelWidth || 190, 120) : (opts.labelWidth || 190);
   const barH = 9, gap = 2, groupGap = 14, padTop = 8, axisH = 20;
-  const W = Math.max(320, el.clientWidth || 600);
-  const plotW = W - labelWidth - 56;
+  const W = el.clientWidth;
+  const plotW = W - labelWidth - (opts.rightPad || 56);
   const H = padTop + rows.length * (barH * 2 + gap + groupGap) + axisH;
   const x = (v) => labelWidth + (Math.max(0, Math.min(v ?? 0, max)) / max) * plotW;
   const rounded = (x0, y, w, h, cls) => {
@@ -277,13 +292,14 @@ function groupedBars(el, rows, { max = 1, format = (v) => v, ticks = [0, 0.25, 0
     const r = Math.min(4, h / 2, w);
     return `<path class="${cls}" d="M${x0},${y} H${x0 + w - r} Q${x0 + w},${y} ${x0 + w},${y + r} V${y + h - r} Q${x0 + w},${y + h} ${x0 + w - r},${y + h} H${x0} Z" />`;
   };
-  let svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Grouped bar chart"><g class="grid">`;
+  let svg = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Grouped bar chart"><g class="grid">`;
   for (const t of ticks) svg += `<line x1="${x(t)}" x2="${x(t)}" y1="${padTop - 4}" y2="${H - axisH}" />`;
   svg += `</g>`;
   rows.forEach((r, i) => {
     const y0 = padTop + i * (barH * 2 + gap + groupGap);
     svg += `<g class="grp" data-i="${i}"><rect class="row-bg" x="0" y="${y0 - 5}" width="${W}" height="${barH * 2 + gap + 10}" fill="transparent" />`;
-    svg += `<text class="cat-label" x="${labelWidth - 10}" y="${y0 + barH + 4}" text-anchor="end">${esc(r.label.length > 28 ? r.label.slice(0, 27) + "…" : r.label)}</text>`;
+    const maxChars = Math.floor(labelWidth / 7);
+    svg += `<text class="cat-label" x="${labelWidth - 10}" y="${y0 + barH + 4}" text-anchor="end">${esc(r.label.length > maxChars ? r.label.slice(0, maxChars - 1) + "…" : r.label)}</text>`;
     svg += rounded(labelWidth, y0, x(r.a) - labelWidth, barH, "bar-baseline");
     svg += rounded(labelWidth, y0 + barH + gap, x(r.b) - labelWidth, barH, "bar-rag");
     svg += `<text class="value-label" x="${x(r.a) + 5}" y="${y0 + barH - 1}">${esc(r.aText ?? format(r.a))}</text>`;
@@ -303,7 +319,7 @@ function groupedBars(el, rows, { max = 1, format = (v) => v, ticks = [0, 0.25, 0
 function table(headers, rows, opts = {}) {
   const th = headers.map((h, i) => `<th class="${opts.num?.includes(i) ? "num" : ""}">${esc(h)}</th>`).join("");
   const tr = rows.map((r, ri) => `<tr class="${opts.best?.includes(ri) ? "best" : ""}">${r.map((c, i) => `<td class="${opts.num?.includes(i) ? "num" : ""}">${c}</td>`).join("")}</tr>`).join("");
-  return `<table><thead><tr>${th}</tr></thead><tbody>${tr}</tbody></table>`;
+  return `<div class="table-wrap"><table><thead><tr>${th}</tr></thead><tbody>${tr}</tbody></table></div>`;
 }
 
 /* ------------------------------------------------------------- evaluation */
@@ -318,7 +334,8 @@ async function loadExperiments() {
       $("#eval-empty").classList.remove("hidden");
       $("#eval-body").classList.add("hidden");
     } else {
-      const preferred = state.experiments.find((e) => /dev/.test(e.exp_id)) || state.experiments[0];
+      const preferred = state.experiments.find((e) => e.exp_id === "rag_vs_baseline_dev")
+        || state.experiments.find((e) => /dev/.test(e.exp_id)) || state.experiments[0];
       sel.value = preferred.exp_id;
       selectExperiment(preferred.exp_id);
     }
@@ -361,7 +378,17 @@ function renderSummary() {
   const p = s.paired || {};
   const d = p.approval_delta_rag_minus_baseline || {};
   const delta = d.mean != null ? `${(d.mean * 100 >= 0 ? "+" : "")}${(d.mean * 100).toFixed(1)} pts (95% CI ${(d.ci_low * 100).toFixed(1)} to ${(d.ci_high * 100).toFixed(1)}), McNemar p=${p.mcnemar_exact_p == null ? "n/a" : p.mcnemar_exact_p.toFixed(3)}` : "";
+  const refTiles = [];
+  for (const [src, label] of [["human", "Human labels"], ["ai_reference", "Reference labels (AI-assisted, not human)"]]) {
+    const rc = state.agreement?.reference_comparison?.[src]?.[state.currentExp?.exp_id];
+    if (!rc || !rc.n_pairs) continue;
+    const d = rc.delta_rag_minus_baseline || {};
+    const r2 = (x) => ({ rate: x.rate, k: x.good, n: x.n });
+    refTiles.push(tile(`${label}: good`, pct(r2(rc.conditions.baseline)), pct(r2(rc.conditions.rag)),
+      `${(d.mean * 100 >= 0 ? "+" : "")}${(d.mean * 100).toFixed(1)} pts (95% CI ${(d.ci_low * 100).toFixed(1)} to ${(d.ci_high * 100).toFixed(1)}), McNemar p=${rc.mcnemar_exact_p == null ? "n/a" : rc.mcnemar_exact_p.toFixed(3)}`));
+  }
   $("#kpi-tiles").innerHTML = [
+    ...refTiles,
     tile("Judge approval (LLM, unverified)", pct(B.judge_approval), pct(R.judge_approval), delta),
     tile("Approval, abstentions count as fail", pct(B.judge_approval_itt), pct(R.judge_approval_itt), `RAG abstained on ${R.n_abstained ?? 0} of ${R.n_items ?? 0}`),
     tile("Explanations with unsupported claims", pct(B.explanations_with_unsupported_claims), pct(R.explanations_with_unsupported_claims), "as listed by the judge"),
@@ -399,7 +426,7 @@ function renderSummary() {
     aText: `${pct(e.baseline?.approval)} (n=${e.baseline?.approval?.n ?? 0})`, bText: `${pct(e.rag?.approval)} (n=${e.rag?.approval?.n ?? 0})`,
     tip: `<div class="t">${esc(f)}</div>Baseline ${pct(e.baseline?.approval)} ${frac(e.baseline?.approval)}<br>RAG ${pct(e.rag?.approval)} ${frac(e.rag?.approval)}${e.rag?.abstained ? `<br>RAG abstained ${e.rag.abstained}` : ""}<br><span class="muted">small n: read as indicative only</span>`,
   }));
-  groupedBars($("#chart-features"), featRows, { max: 1, format: (v) => `${Math.round(v * 100)}%`, labelWidth: 230 });
+  groupedBars($("#chart-features"), featRows, { max: 1, format: (v) => `${Math.round(v * 100)}%`, labelWidth: 230, rightPad: 110 });
   $("#table-features").innerHTML = table(["Feature", "n", "Baseline approval", "RAG approval", "Baseline checks", "RAG checks"],
     feats.map(([f, e]) => [esc(f), e.baseline?.n ?? 0, `${pct(e.baseline?.approval)} ${frac(e.baseline?.approval)}`, `${pct(e.rag?.approval)} ${frac(e.rag?.approval)}`, fmt(e.baseline?.check_coverage), fmt(e.rag?.check_coverage)]), { num: [1, 4, 5] });
 
@@ -450,6 +477,8 @@ function confusion(m) {
 async function loadAgreement() {
   try {
     const a = await api("/api/agreement");
+    state.agreement = a;
+    renderSummary();
     const names = { human: "Genuine human labels", ai_reference: "AI-assisted reference labels (not human)" };
     let html = "";
     for (const [src, rep] of Object.entries(a.sources)) {
